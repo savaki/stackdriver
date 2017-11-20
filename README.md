@@ -1,5 +1,7 @@
 # stackdriver
 
+[![GoDoc](https://godoc.org/github.com/savaki/stackdriver?status.svg)](https://godoc.org/github.com/savaki/stackdriver)
+
 stackdriver is an opentracing implementation that provides support for Stackdriver Trace, Stackdriver Logging, and 
 Stackdriver Error Reporting
 
