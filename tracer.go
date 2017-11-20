@@ -409,6 +409,15 @@ func (fn LoggerFunc) Log(e logging.Entry) {
 	fn(e)
 }
 
+// MultiLogger allows logging messages to be sent to multiple loggers
+func MultiLogger(loggers ...Logger) Logger {
+	return LoggerFunc(func(e logging.Entry) {
+		for _, logger := range loggers {
+			logger.Log(e)
+		}
+	})
+}
+
 // WithLogger allows the logger to be configured
 func WithLogger(logger Logger) Option {
 	return optionFunc(func(opt *Options) {
