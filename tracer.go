@@ -96,17 +96,14 @@ loop:
 		case opentracing.ChildOfRef, opentracing.FollowsFromRef:
 			if parent, ok := ref.ReferencedContext.(*Span); ok {
 				if parent.gSpan != nil {
-					if parent.header != "" {
-						span.gSpan = t.traceClient.SpanFromHeader(operationName, parent.header)
-					} else {
-						span.gSpan = parent.gSpan.NewChild(operationName)
-					}
+					span.gSpan = parent.gSpan.NewChild(operationName) // local child
+					span.errorSent = parent.errorSent
+
+				} else if parent.header != "" {
+					span.gSpan = t.traceClient.SpanFromHeader(operationName, parent.header) // remote child
+					span.errorSent = parent.errorSent
 				}
 			}
-			ref.ReferencedContext.ForeachBaggageItem(func(k, v string) bool {
-				span.SetBaggageItem(k, v)
-				return true
-			})
 			break loop
 		}
 	}
@@ -115,6 +112,18 @@ loop:
 		if span.gSpan == nil {
 			span.gSpan = t.traceClient.NewSpan(operationName)
 		}
+	}
+
+	if span.errorSent == nil {
+		errorSent := int32(0)
+		span.errorSent = &errorSent
+	}
+
+	for _, ref := range options.References {
+		ref.ReferencedContext.ForeachBaggageItem(func(k, v string) bool {
+			span.SetBaggageItem(k, v)
+			return true
+		})
 	}
 
 	for k, v := range options.Tags {
@@ -219,6 +228,70 @@ func (t *Tracer) Inject(sm opentracing.SpanContext, format interface{}, carrier 
 	return nil
 }
 
+func extractBinary(carrier interface{}) (string, map[string]string, error) {
+	r, ok := carrier.(io.Reader)
+	if !ok {
+		return "", nil, fmt.Errorf("requires an io.Reader carrier")
+	}
+	data, err := ioutil.ReadAll(r)
+	if err != nil {
+		return "", nil, err
+	}
+	content := binaryContent{}
+	if err := json.Unmarshal(data, &content); err != nil {
+		return "", nil, err
+	}
+	return content.Header, content.Baggage, nil
+}
+
+func extractTextMap(carrier interface{}) (string, map[string]string, error) {
+	var header string
+	var baggage map[string]string
+
+	m, ok := carrier.(opentracing.TextMapReader)
+	if !ok {
+		return "", nil, fmt.Errorf("requires an opentracing.TextMapWriter")
+	}
+	fn := func(k, v string) error {
+		if k == httpHeader {
+			header = v
+		} else if k == httpBaggage {
+			return json.Unmarshal([]byte(v), &baggage)
+		}
+		return nil
+	}
+
+	if err := m.ForeachKey(fn); err != nil {
+		return "", nil, err
+	}
+
+	return header, baggage, nil
+}
+
+func extractHTTPHeaders(carrier interface{}) (string, map[string]string, error) {
+	var header string
+	var baggage map[string]string
+
+	m, ok := carrier.(opentracing.HTTPHeadersCarrier)
+	if !ok {
+		return "", nil, fmt.Errorf("requires an opentracing.TextMapWriter")
+	}
+	fn := func(k, v string) error {
+		if k == httpHeader {
+			header = v
+		} else if k == httpBaggage {
+			return json.Unmarshal([]byte(v), &baggage)
+		}
+		return nil
+	}
+
+	if err := m.ForeachKey(fn); err != nil {
+		return "", nil, err
+	}
+
+	return header, baggage, nil
+}
+
 // Extract() returns a SpanContext instance given `format` and `carrier`.
 //
 // OpenTracing defines a common set of `format` values (see BuiltinFormat),
@@ -263,56 +336,23 @@ func (t *Tracer) Inject(sm opentracing.SpanContext, format interface{}, carrier 
 func (t *Tracer) Extract(format interface{}, carrier interface{}) (opentracing.SpanContext, error) {
 	var header string
 	var baggage map[string]string
+	var err error
 
 	if format == opentracing.Binary {
-		r, ok := carrier.(io.Reader)
-		if !ok {
-			return nil, fmt.Errorf("requires an io.Reader carrier")
-		}
-		data, err := ioutil.ReadAll(r)
+		header, baggage, err = extractBinary(carrier)
 		if err != nil {
 			return nil, err
 		}
-		content := binaryContent{}
-		if err := json.Unmarshal(data, &content); err != nil {
-			return nil, err
-		}
-		header = content.Header
-		baggage = content.Baggage
 
 	} else if format == opentracing.TextMap {
-		m, ok := carrier.(opentracing.TextMapReader)
-		if !ok {
-			return nil, fmt.Errorf("requires an opentracing.TextMapWriter")
-		}
-		fn := func(k, v string) error {
-			if k == httpHeader {
-				header = v
-			} else if k == httpBaggage {
-				return json.Unmarshal([]byte(v), &baggage)
-			}
-			return nil
-		}
-
-		if err := m.ForeachKey(fn); err != nil {
+		header, baggage, err = extractTextMap(carrier)
+		if err != nil {
 			return nil, err
 		}
 
 	} else if format == opentracing.HTTPHeaders {
-		m, ok := carrier.(opentracing.HTTPHeadersCarrier)
-		if !ok {
-			return nil, fmt.Errorf("requires an opentracing.TextMapWriter")
-		}
-		fn := func(k, v string) error {
-			if k == httpHeader {
-				header = v
-			} else if k == httpBaggage {
-				return json.Unmarshal([]byte(v), &baggage)
-			}
-			return nil
-		}
-
-		if err := m.ForeachKey(fn); err != nil {
+		header, baggage, err = extractHTTPHeaders(carrier)
+		if err != nil {
 			return nil, err
 		}
 
@@ -320,16 +360,12 @@ func (t *Tracer) Extract(format interface{}, carrier interface{}) (opentracing.S
 		return nil, fmt.Errorf("unhandled format, %v", format)
 	}
 
-	gSpan := t.traceClient.SpanFromHeader("child", header)
-	for k, v := range baggage {
-		gSpan.SetLabel(k, v)
-	}
-
+	errorSent := int32(0)
 	span := &Span{
-		tracer:  t,
-		baggage: baggage,
-		gSpan:   gSpan,
-		header:  header,
+		tracer:    t,
+		baggage:   baggage,
+		header:    header,
+		errorSent: &errorSent,
 	}
 
 	return span, nil

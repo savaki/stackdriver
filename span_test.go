@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -163,7 +164,6 @@ func TestTrace(t *testing.T) {
 
 func TestInject(t *testing.T) {
 	projectID := os.Getenv("PROJECT_ID")
-	projectID = "vavende-dev"
 	if projectID == "" {
 		t.SkipNow()
 	}
@@ -277,10 +277,43 @@ func TestLog(t *testing.T) {
 	logger := client.Logger(projectID)
 
 	tracer := stackdriver.New(stackdriver.WithLogger(logger))
+
 	span := tracer.StartSpan("Sample")
 	span.SetTag("hello", "world")
 	span.LogFields(log.String("message", fmt.Sprintf("howdy! %v", time.Now())))
 	span.Finish()
+
+	time.Sleep(time.Second * 3)
+}
+
+func TestError(t *testing.T) {
+	projectID := os.Getenv("PROJECT_ID")
+	if projectID == "" {
+		t.SkipNow()
+	}
+	if _, err := os.Stat(credentialsFile); err != nil {
+		t.SkipNow()
+	}
+
+	ctx := context.Background()
+	tracer, err := stackdriver.All(ctx, projectID, "service", "latest", option.WithCredentialsFile(credentialsFile))
+	assert.Nil(t, err)
+
+	a := tracer.StartSpan("error report")
+	time.Sleep(time.Millisecond * 250)
+
+	b := tracer.StartSpan("child", opentracing.SpanReference{
+		Type:              opentracing.ChildOfRef,
+		ReferencedContext: a.Context(),
+	})
+	time.Sleep(time.Millisecond * 100)
+	b.LogFields(log.Error(io.EOF))
+	b.Finish()
+
+	time.Sleep(time.Millisecond * 100)
+
+	a.LogFields(log.Error(io.ErrClosedPipe))
+	a.Finish()
 
 	time.Sleep(time.Second * 3)
 }

@@ -21,7 +21,9 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
+	"cloud.google.com/go/errorreporting"
 	"cloud.google.com/go/logging"
 	"cloud.google.com/go/trace"
 	"github.com/opentracing/opentracing-go"
@@ -38,13 +40,14 @@ var (
 
 // Span references a dapper Span
 type Span struct {
-	tracer  *Tracer
-	baggage map[string]string
-	tags    map[string]string
-	sampled bool
-	gSpan   *trace.Span
-	header  string
-	resp    *http.Response
+	tracer    *Tracer
+	baggage   map[string]string
+	tags      map[string]string
+	sampled   bool
+	errorSent *int32
+	gSpan     *trace.Span
+	header    string
+	resp      *http.Response
 }
 
 func (s *Span) release() {
@@ -56,6 +59,7 @@ func (s *Span) release() {
 	}
 
 	s.sampled = false
+	s.errorSent = nil
 	s.gSpan = nil
 	s.header = ""
 	s.resp = nil
@@ -194,10 +198,20 @@ func (s *Span) LogFields(fields ...log.Field) {
 
 	content := map[string]interface{}{}
 	for _, f := range fields {
-		content[f.Key()] = f.Value()
+		value := f.Value()
+		content[f.Key()] = value
+
+		if s.tracer.errorClient != nil && value != nil {
+			if err, ok := value.(error); ok {
+				if v := atomic.AddInt32(s.errorSent, 1); v == 1 {
+					s.tracer.errorClient.Report(errorreporting.Entry{
+						Error: err,
+					})
+				}
+			}
+		}
 	}
 
-	var traceID string
 	if s.gSpan != nil {
 		if labels == nil {
 			labels = map[string]string{}
@@ -208,7 +222,6 @@ func (s *Span) LogFields(fields ...log.Field) {
 	s.tracer.logger.Log(logging.Entry{
 		Payload: content,
 		Labels:  labels,
-		Trace:   traceID,
 	})
 }
 
