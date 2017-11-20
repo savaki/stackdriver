@@ -174,6 +174,10 @@ func (t *Tracer) Inject(sm opentracing.SpanContext, format interface{}, carrier 
 		return fmt.Errorf("unsupported SpanContext, %v", sm)
 	}
 
+	if carrier == nil {
+		return opentracing.ErrInvalidCarrier
+	}
+
 	var header string
 	if span.gSpan != nil {
 		req, _ := http.NewRequest(http.MethodGet, "http://localhost", nil)
@@ -195,7 +199,7 @@ func (t *Tracer) Inject(sm opentracing.SpanContext, format interface{}, carrier 
 	if format == opentracing.Binary {
 		w, ok := carrier.(io.Writer)
 		if !ok {
-			return fmt.Errorf("requires an io.Writer carrier")
+			return opentracing.ErrInvalidCarrier
 		}
 		content := binaryContent{
 			Header:  header,
@@ -210,7 +214,7 @@ func (t *Tracer) Inject(sm opentracing.SpanContext, format interface{}, carrier 
 	} else if format == opentracing.TextMap || format == opentracing.HTTPHeaders {
 		m, ok := carrier.(opentracing.TextMapWriter)
 		if !ok {
-			return fmt.Errorf("requires an opentracing.TextMapWriter")
+			return opentracing.ErrInvalidCarrier
 		}
 		m.Set(httpHeader, header)
 
@@ -223,15 +227,16 @@ func (t *Tracer) Inject(sm opentracing.SpanContext, format interface{}, carrier 
 		}
 
 	} else {
-		return fmt.Errorf("unhandled format, %v", format)
+		return opentracing.ErrUnsupportedFormat
 	}
+
 	return nil
 }
 
 func extractBinary(carrier interface{}) (string, map[string]string, error) {
 	r, ok := carrier.(io.Reader)
 	if !ok {
-		return "", nil, fmt.Errorf("requires an io.Reader carrier")
+		return "", nil, opentracing.ErrInvalidCarrier
 	}
 	data, err := ioutil.ReadAll(r)
 	if err != nil {
@@ -250,7 +255,7 @@ func extractTextMap(carrier interface{}) (string, map[string]string, error) {
 
 	m, ok := carrier.(opentracing.TextMapReader)
 	if !ok {
-		return "", nil, fmt.Errorf("requires an opentracing.TextMapWriter")
+		return "", nil, opentracing.ErrInvalidCarrier
 	}
 	fn := func(k, v string) error {
 		if k == httpHeader {
@@ -274,7 +279,7 @@ func extractHTTPHeaders(carrier interface{}) (string, map[string]string, error) 
 
 	m, ok := carrier.(opentracing.HTTPHeadersCarrier)
 	if !ok {
-		return "", nil, fmt.Errorf("requires an opentracing.TextMapWriter")
+		return "", nil, opentracing.ErrInvalidCarrier
 	}
 	fn := func(k, v string) error {
 		if k == httpHeader {
