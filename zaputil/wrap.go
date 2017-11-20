@@ -8,6 +8,7 @@ import (
 )
 
 const (
+	// message is the reserved key used by GCP to denote a log message
 	message = "message"
 )
 

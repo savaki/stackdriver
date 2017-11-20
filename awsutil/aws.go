@@ -9,13 +9,18 @@ import (
 )
 
 const (
-	awsKey       = "stackdriver.aws"
+	// awsContextKey refers to the key in the context.Context that indicates the
+	// request.Request has been instrumented
+	awsContextKey = "stackdriver.aws"
+
+	// headerTarget is the exact header used by AWS to store the service name
 	headerTarget = "x-amz-target"
 )
 
+// Instrument the AWS client with the stackdriver opentracing.Tracer
 func Instrument(client *client.Client) {
 	client.Handlers.Sign.PushBack(func(req *request.Request) {
-		ctx := context.WithValue(req.Context(), awsKey, struct{}{})
+		ctx := context.WithValue(req.Context(), awsContextKey, struct{}{})
 
 		var operationName string
 		if values := req.SignedHeaderVals[headerTarget]; len(values) > 0 {
@@ -30,7 +35,7 @@ func Instrument(client *client.Client) {
 
 	client.Handlers.Complete.PushBack(func(req *request.Request) {
 		ctx := req.Context()
-		if ctx.Value(awsKey) == nil {
+		if ctx.Value(awsContextKey) == nil {
 			return
 		}
 
