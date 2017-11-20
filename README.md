@@ -48,27 +48,6 @@ func main() {
 }
 ```
 
-### AWS
-
-The ```awsutil``` enables simple instrumentation of the ```github.com/aws/aws-sdk-go``` package
-
-```go
-s := session.Must(session.NewSession())
-api := dynamodb.New(s)
-awsutil.Instrument(api.Client)
-dynamo.ListTablesWithContext(ctx, &dynamodb.ListTablesInput{})
-```
-
-### Zap
-
-In addition to logging to GCP, it's also useful to log locally.  ```zaputil```
-provides an integration with ```go.uber.org/zap```
-
-```go
-logger, _ := zap.NewDevelopmentConfig().Build()
-stackdriver.New(stackdriver.WithLogger(logger))
-```
-
 ### To Do
 
 * Implement Span.FinishWithOptions
