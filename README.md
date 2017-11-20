@@ -45,3 +45,8 @@ func main() {
 	time.Sleep(time.Second * 3) 
 }
 ``` 
+
+### To Do
+
+* Implement Span.FinishWithOptions
+* Implement Span.LogKV
