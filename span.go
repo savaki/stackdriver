@@ -53,7 +53,9 @@ func (s *Span) release() {
 		delete(s.tags, key)
 	}
 
+	s.sampled = false
 	s.gSpan = nil
+	s.header = ""
 	spanPool.Put(s)
 }
 

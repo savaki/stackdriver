@@ -16,6 +16,7 @@
 package stackdriver_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -141,31 +142,91 @@ func TestInject(t *testing.T) {
 
 	ctx := context.Background()
 	tracer, err := stackdriver.All(ctx, projectID, "service", "latest", option.WithCredentialsFile(credentialsFile))
-	local := tracer.StartSpan("local")
-	local.SetBaggageItem("hello", "world")
-	local.LogFields(log.String("message", "local message"))
-
-	time.Sleep(time.Second)
-
-	// Inject -> Extract
-	header := http.Header{}
-	assert.Nil(t, tracer.Inject(local.Context(), opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(header)))
-
-	remoteContext, err := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(header))
 	assert.Nil(t, err)
 
-	// create remote span
-	remote := tracer.StartSpan("remote", opentracing.SpanReference{
-		Type:              opentracing.ChildOfRef,
-		ReferencedContext: remoteContext,
-	})
-	time.Sleep(time.Second)
-	remote.SetBaggageItem("a", "b")
-	remote.LogFields(log.String("message", "remote message"))
-	remote.Finish()
-	time.Sleep(time.Second)
+	t.Run("Binary", func(t *testing.T) {
+		local := tracer.StartSpan("Binary - local")
+		local.SetBaggageItem("hello", "world")
+		local.LogFields(log.String("message", "local message"))
 
-	local.Finish()
+		time.Sleep(time.Millisecond * 250)
+
+		// Inject -> Extract
+		buf := bytes.NewBuffer(nil)
+		assert.Nil(t, tracer.Inject(local.Context(), opentracing.Binary, buf))
+
+		remoteContext, err := tracer.Extract(opentracing.Binary, buf)
+		assert.Nil(t, err)
+
+		// create remote span
+		remote := tracer.StartSpan("remote", opentracing.SpanReference{
+			Type:              opentracing.ChildOfRef,
+			ReferencedContext: remoteContext,
+		})
+		time.Sleep(time.Millisecond * 250)
+		remote.SetBaggageItem("a", "b")
+		remote.LogFields(log.String("message", "remote message"))
+		remote.Finish()
+		time.Sleep(time.Millisecond * 250)
+
+		local.Finish()
+	})
+
+	t.Run("TextMap", func(t *testing.T) {
+		local := tracer.StartSpan("TextMap - local")
+		local.SetBaggageItem("hello", "world")
+		local.LogFields(log.String("message", "local message"))
+
+		time.Sleep(time.Millisecond * 250)
+
+		// Inject -> Extract
+		carrier := opentracing.TextMapCarrier{}
+		assert.Nil(t, tracer.Inject(local.Context(), opentracing.TextMap, carrier))
+
+		remoteContext, err := tracer.Extract(opentracing.TextMap, carrier)
+		assert.Nil(t, err)
+
+		// create remote span
+		remote := tracer.StartSpan("remote", opentracing.SpanReference{
+			Type:              opentracing.ChildOfRef,
+			ReferencedContext: remoteContext,
+		})
+		time.Sleep(time.Millisecond * 250)
+		remote.SetBaggageItem("a", "b")
+		remote.LogFields(log.String("message", "remote message"))
+		remote.Finish()
+		time.Sleep(time.Millisecond * 250)
+
+		local.Finish()
+	})
+
+	t.Run("HTTPHeaders", func(t *testing.T) {
+		local := tracer.StartSpan("HTTPHeaders - local")
+		local.SetBaggageItem("hello", "world")
+		local.LogFields(log.String("message", "local message"))
+
+		time.Sleep(time.Millisecond * 250)
+
+		// Inject -> Extract
+		header := http.Header{}
+		assert.Nil(t, tracer.Inject(local.Context(), opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(header)))
+
+		remoteContext, err := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(header))
+		assert.Nil(t, err)
+
+		// create remote span
+		remote := tracer.StartSpan("remote", opentracing.SpanReference{
+			Type:              opentracing.ChildOfRef,
+			ReferencedContext: remoteContext,
+		})
+		time.Sleep(time.Millisecond * 250)
+		remote.SetBaggageItem("a", "b")
+		remote.LogFields(log.String("message", "remote message"))
+		remote.Finish()
+		time.Sleep(time.Millisecond * 250)
+
+		local.Finish()
+	})
 
 	time.Sleep(time.Second * 3)
 }
