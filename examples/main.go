@@ -1,21 +1,3 @@
-# stackdriver
-
-stackdriver is an opentracing implementation that provides support for Stackdriver Trace, Stackdriver Logging, and 
-Stackdriver Error Reporting
-
-## Getting Started
-
-To install stackdriver, use:
-
-```bash
-go get -u github.com/savaki/stackdriver
-```
-
-## Sample
-
-Assuming a credentials file, ```credentials.json```, the following can be used:
-
-```go
 package main
 
 import (
@@ -41,7 +23,5 @@ func main() {
 	span.LogFields(log.String("message", "recorded to Stackdriver logging"))
 	defer span.Finish()
 
-	// stackdriver publishes content asynchronous, need to give it a moment 
-	time.Sleep(time.Second * 3) 
+	time.Sleep(time.Second * 3) // stackdriver publishes content asynchronous, need to give it a moment
 }
-``` 

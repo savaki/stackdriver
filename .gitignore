@@ -1,0 +1,10 @@
+# ignore intellij
+#
+.idea
+*.iml
+*.ipr
+*.iws
+
+# ignore credentials
+#
+*.json
