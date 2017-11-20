@@ -42,6 +42,7 @@ type Span struct {
 	tags    map[string]string
 	sampled bool
 	gSpan   *trace.Span
+	header  string
 }
 
 func (s *Span) release() {

@@ -18,6 +18,7 @@ package stackdriver_test
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -125,6 +126,46 @@ func TestTrace(t *testing.T) {
 	span := tracer.StartSpan("Sample")
 	span.SetTag("hello", "world")
 	span.Finish()
+
+	time.Sleep(time.Second * 3)
+}
+
+func TestInject(t *testing.T) {
+	projectID := os.Getenv("PROJECT_ID")
+	if projectID == "" {
+		t.SkipNow()
+	}
+	if _, err := os.Stat(credentialsFile); err != nil {
+		t.SkipNow()
+	}
+
+	ctx := context.Background()
+	tracer, err := stackdriver.All(ctx, projectID, "service", "latest", option.WithCredentialsFile(credentialsFile))
+	local := tracer.StartSpan("local")
+	local.SetBaggageItem("hello", "world")
+	local.LogFields(log.String("message", "local message"))
+
+	time.Sleep(time.Second)
+
+	// Inject -> Extract
+	header := http.Header{}
+	assert.Nil(t, tracer.Inject(local.Context(), opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(header)))
+
+	remoteContext, err := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(header))
+	assert.Nil(t, err)
+
+	// create remote span
+	remote := tracer.StartSpan("remote", opentracing.SpanReference{
+		Type:              opentracing.ChildOfRef,
+		ReferencedContext: remoteContext,
+	})
+	time.Sleep(time.Second)
+	remote.SetBaggageItem("a", "b")
+	remote.LogFields(log.String("message", "remote message"))
+	remote.Finish()
+	time.Sleep(time.Second)
+
+	local.Finish()
 
 	time.Sleep(time.Second * 3)
 }
