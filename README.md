@@ -44,7 +44,12 @@ func main() {
 	// stackdriver publishes content asynchronous, need to give it a moment 
 	time.Sleep(time.Second * 3) 
 }
-``` 
+```
+
+### Plugins
+
+* ```awsutil``` - provides support for ```github.com/aws/aws-sdk-go```
+* ```zaputil``` - provides support for  ```go.uber.org/zap```
 
 ### To Do
 
