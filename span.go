@@ -17,6 +17,7 @@ package stackdriver
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"sync"
@@ -43,6 +44,7 @@ type Span struct {
 	sampled bool
 	gSpan   *trace.Span
 	header  string
+	resp    *http.Response
 }
 
 func (s *Span) release() {
@@ -56,6 +58,8 @@ func (s *Span) release() {
 	s.sampled = false
 	s.gSpan = nil
 	s.header = ""
+	s.resp = nil
+
 	spanPool.Put(s)
 }
 
@@ -81,7 +85,12 @@ func (s *Span) Finish() {
 // timestamps and log data.
 func (s *Span) FinishWithOptions(opts opentracing.FinishOptions) {
 	if s.gSpan != nil {
-		s.gSpan.Finish()
+		if s.resp != nil {
+			s.gSpan.Finish(trace.WithResponse(s.resp))
+
+		} else {
+			s.gSpan.Finish()
+		}
 	}
 
 	defer s.release()
@@ -115,6 +124,8 @@ func (s *Span) SetTag(key string, value interface{}) opentracing.Span {
 
 	var str string
 	switch v := value.(type) {
+	case *http.Response:
+		s.resp = v
 	case string:
 		str = v
 	case bool:

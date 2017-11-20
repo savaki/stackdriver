@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -91,14 +92,43 @@ func TestSpan(t *testing.T) {
 }
 
 func TestOpentracing(t *testing.T) {
-	tracer := stackdriver.New()
-	opentracing.SetGlobalTracer(tracer)
+	t.Run("default", func(t *testing.T) {
+		tracer := stackdriver.New()
+		opentracing.SetGlobalTracer(tracer)
 
-	a, ctx := opentracing.StartSpanFromContext(context.Background(), "a")
-	defer a.Finish()
+		a, ctx := opentracing.StartSpanFromContext(context.Background(), "a")
+		defer a.Finish()
 
-	b, ctx := opentracing.StartSpanFromContext(ctx, "b")
-	defer b.Finish()
+		b, ctx := opentracing.StartSpanFromContext(ctx, "b")
+		defer b.Finish()
+	})
+
+	t.Run("http", func(t *testing.T) {
+		projectID := os.Getenv("PROJECT_ID")
+		if projectID == "" {
+			t.SkipNow()
+		}
+		if _, err := os.Stat(credentialsFile); err != nil {
+			t.SkipNow()
+		}
+
+		ctx := context.Background()
+		tracer, err := stackdriver.All(ctx, projectID, "service", "latest", option.WithCredentialsFile(credentialsFile))
+		assert.Nil(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "http://localhost", nil)
+		recorder := httptest.NewRecorder()
+		recorder.WriteHeader(http.StatusOK)
+
+		opentracing.SetGlobalTracer(tracer)
+		span := opentracing.StartSpan("http")
+		span.SetTag("http.request", req)
+		span.SetTag("http.Response", recorder.Result())
+		time.Sleep(time.Millisecond * 250)
+		span.Finish()
+
+		time.Sleep(time.Second * 4)
+	})
 }
 
 func BenchmarkSpan(t *testing.B) {
@@ -133,6 +163,7 @@ func TestTrace(t *testing.T) {
 
 func TestInject(t *testing.T) {
 	projectID := os.Getenv("PROJECT_ID")
+	projectID = "vavende-dev"
 	if projectID == "" {
 		t.SkipNow()
 	}
