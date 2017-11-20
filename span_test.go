@@ -280,6 +280,7 @@ func TestLog(t *testing.T) {
 
 	span := tracer.StartSpan("Sample")
 	span.SetTag("hello", "world")
+	time.Sleep(time.Millisecond * 125)
 	span.LogFields(log.String("message", fmt.Sprintf("howdy! %v", time.Now())))
 	span.Finish()
 

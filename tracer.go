@@ -22,7 +22,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"sync"
+	"time"
 
 	"cloud.google.com/go/errorreporting"
 	"cloud.google.com/go/logging"
@@ -34,14 +34,6 @@ import (
 const (
 	httpHeader  = "X-Stackdriver"
 	httpBaggage = "X-Stackdriver-Baggage"
-)
-
-var (
-	optionPool = sync.Pool{
-		New: func() interface{} {
-			return &opentracing.StartSpanOptions{}
-		},
-	}
 )
 
 // Tracer is a simple, thin interface for Span creation and SpanContext
@@ -83,11 +75,12 @@ type Tracer struct {
 func (t *Tracer) StartSpan(operationName string, opts ...opentracing.StartSpanOption) opentracing.Span {
 	span := spanPool.Get().(*Span)
 	span.tracer = t
+	span.startedAt = time.Now()
+	span.operationName = operationName
 
-	options := optionPool.Get().(*opentracing.StartSpanOptions)
-	defer optionPool.Put(options)
+	options := opentracing.StartSpanOptions{}
 	for _, opt := range opts {
-		opt.Apply(options)
+		opt.Apply(&options)
 	}
 
 loop:

@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"cloud.google.com/go/errorreporting"
 	"cloud.google.com/go/logging"
@@ -40,14 +41,16 @@ var (
 
 // Span references a dapper Span
 type Span struct {
-	tracer    *Tracer
-	baggage   map[string]string
-	tags      map[string]string
-	sampled   bool
-	errorSent *int32
-	gSpan     *trace.Span
-	header    string
-	resp      *http.Response
+	tracer        *Tracer
+	baggage       map[string]string
+	tags          map[string]string
+	sampled       bool
+	errorSent     *int32
+	gSpan         *trace.Span
+	header        string
+	resp          *http.Response
+	operationName string
+	startedAt     time.Time
 }
 
 func (s *Span) release() {
@@ -63,6 +66,7 @@ func (s *Span) release() {
 	s.gSpan = nil
 	s.header = ""
 	s.resp = nil
+	s.operationName = ""
 
 	spanPool.Put(s)
 }
@@ -95,6 +99,15 @@ func (s *Span) FinishWithOptions(opts opentracing.FinishOptions) {
 		} else {
 			s.gSpan.Finish()
 		}
+	}
+
+	// if we're not tracing, then let's log this content
+	if s.tracer.traceClient == nil || (s.gSpan != nil && !s.gSpan.Traced()) {
+		content := map[string]interface{}{
+			"message": s.operationName,
+			"elapsed": int64(time.Now().Sub(s.startedAt) / time.Millisecond),
+		}
+		s.log(content)
 	}
 
 	defer s.release()
@@ -170,19 +183,21 @@ func (s *Span) SetTag(key string, value interface{}) opentracing.Span {
 	return s
 }
 
-// LogFields is an efficient and type-checked way to record key:value
-// logging data about a Span, though the programming interface is a little
-// more verbose than LogKV(). Here's an example:
-//
-//    span.LogFields(
-//        log.String("event", "soft error"),
-//        log.String("type", "cache timeout"),
-//        log.Int("waited.millis", 1500))
-//
-// Also see Span.FinishWithOptions() and FinishOptions.BulkLogData.
-func (s *Span) LogFields(fields ...log.Field) {
+func (s *Span) log(content map[string]interface{}) {
 	if s.tracer.logger == nil {
 		return
+	}
+
+	for _, value := range content {
+		if s.tracer.errorClient != nil && value != nil {
+			if err, ok := value.(error); ok {
+				if v := atomic.AddInt32(s.errorSent, 1); v == 1 {
+					s.tracer.errorClient.Report(errorreporting.Entry{
+						Error: err,
+					})
+				}
+			}
+		}
 	}
 
 	var labels map[string]string
@@ -193,22 +208,6 @@ func (s *Span) LogFields(fields ...log.Field) {
 		}
 		for k, v := range s.baggage {
 			labels[k] = v
-		}
-	}
-
-	content := map[string]interface{}{}
-	for _, f := range fields {
-		value := f.Value()
-		content[f.Key()] = value
-
-		if s.tracer.errorClient != nil && value != nil {
-			if err, ok := value.(error); ok {
-				if v := atomic.AddInt32(s.errorSent, 1); v == 1 {
-					s.tracer.errorClient.Report(errorreporting.Entry{
-						Error: err,
-					})
-				}
-			}
 		}
 	}
 
@@ -223,6 +222,25 @@ func (s *Span) LogFields(fields ...log.Field) {
 		Payload: content,
 		Labels:  labels,
 	})
+}
+
+// LogFields is an efficient and type-checked way to record key:value
+// logging data about a Span, though the programming interface is a little
+// more verbose than LogKV(). Here's an example:
+//
+//    span.LogFields(
+//        log.String("event", "soft error"),
+//        log.String("type", "cache timeout"),
+//        log.Int("waited.millis", 1500))
+//
+// Also see Span.FinishWithOptions() and FinishOptions.BulkLogData.
+func (s *Span) LogFields(fields ...log.Field) {
+	content := map[string]interface{}{}
+	for _, f := range fields {
+		content[f.Key()] = f.Value()
+	}
+
+	s.log(content)
 }
 
 // LogKV is a concise, readable way to record key:value logging data about
