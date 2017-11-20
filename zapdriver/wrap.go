@@ -1,4 +1,4 @@
-package zaplog
+package zapdriver
 
 import (
 	"cloud.google.com/go/logging"

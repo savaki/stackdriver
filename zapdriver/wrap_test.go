@@ -1,10 +1,10 @@
-package zaplog_test
+package zapdriver_test
 
 import (
 	"testing"
 
 	"cloud.google.com/go/logging"
-	"github.com/savaki/stackdriver/zaplog"
+	"github.com/savaki/stackdriver/zapdriver"
 	"github.com/tj/assert"
 	"go.uber.org/zap"
 )
@@ -13,7 +13,7 @@ func TestWrap(t *testing.T) {
 	target, err := zap.NewDevelopmentConfig().Build()
 	assert.Nil(t, err)
 
-	logger := zaplog.Wrap(target)
+	logger := zapdriver.Wrap(target)
 	logger.Log(logging.Entry{
 		Payload: map[string]interface{}{
 			"message": "hello",
