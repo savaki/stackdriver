@@ -42,6 +42,7 @@ type Tracer struct {
 	traceClient *trace.Client
 	errorClient *errorreporting.Client
 	logger      Logger
+	baggage     map[string]string
 }
 
 // Create, start, and return a new Span with the given `operationName` and
@@ -112,6 +113,12 @@ loop:
 		span.errorSent = &errorSent
 	}
 
+	// set root baggage
+	for k, v := range t.baggage {
+		span.SetBaggageItem(k, v)
+	}
+
+	// set baggage from parent span
 	for _, ref := range options.References {
 		ref.ReferencedContext.ForeachBaggageItem(func(k, v string) bool {
 			span.SetBaggageItem(k, v)
@@ -369,6 +376,7 @@ type Options struct {
 	ErrorClient *errorreporting.Client
 	TraceClient *trace.Client
 	Logger      Logger
+	Baggage     map[string]string
 }
 
 // Option defines a functional configuration
@@ -425,6 +433,13 @@ func WithLogger(logger Logger) Option {
 	})
 }
 
+// WithBaggage allows root baggage to be specified that will propagate to all spans
+func WithBaggage(baggage map[string]string) Option {
+	return optionFunc(func(opt *Options) {
+		opt.Baggage = baggage
+	})
+}
+
 // New constructs a new stackdriver tracer
 func New(opts ...Option) *Tracer {
 	options := &Options{}
@@ -436,29 +451,13 @@ func New(opts ...Option) *Tracer {
 		traceClient: options.TraceClient,
 		errorClient: options.ErrorClient,
 		logger:      options.Logger,
+		baggage:     options.Baggage,
 	}
 }
 
 // All returns a tracer that includes support for Stackdriver Trace, Logging, and Error Reporting
 func All(ctx context.Context, projectID, serviceName, serviceVersion string, opts ...option.ClientOption) (*Tracer, error) {
-	errorClient, err := errorreporting.NewClient(ctx, projectID, errorreporting.Config{
-		ServiceName:    serviceName,
-		ServiceVersion: serviceVersion,
-	}, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	loggingClient, err := logging.NewClient(ctx, projectID, opts...)
-	if err != nil {
-		return nil, err
-	}
-	logger := loggingClient.Logger(serviceName)
-
-	traceClient, err := trace.NewClient(ctx, projectID, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	return New(WithErrorClient(errorClient), WithTraceClient(traceClient), WithLogger(logger)), nil
+	b := NewBuilder()
+	b.GCP(ctx, projectID, serviceName, serviceVersion, opts...)
+	return b.Build()
 }
