@@ -102,9 +102,23 @@ loop:
 		}
 	}
 
+	// create a new span if we don't already have a parent
 	if t.traceClient != nil {
 		if span.gSpan == nil {
-			span.gSpan = t.traceClient.NewSpan(operationName)
+			var req *http.Request
+			for _, v := range options.Tags {
+				if r, ok := v.(*http.Request); ok && r != nil {
+					req = r
+					break
+				}
+			}
+
+			if req != nil {
+				span.gSpan = t.traceClient.SpanFromRequest(req)
+
+			} else {
+				span.gSpan = t.traceClient.NewSpan(operationName)
+			}
 		}
 	}
 
@@ -374,6 +388,14 @@ func (t *Tracer) Extract(format interface{}, carrier interface{}) (opentracing.S
 	}
 
 	return span, nil
+}
+
+func (t *Tracer) HTTPHandler(h http.Handler) http.Handler {
+	if t.traceClient == nil {
+		return h
+	}
+
+	return t.traceClient.HTTPHandler(h)
 }
 
 // Options contains configuration parameters

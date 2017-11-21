@@ -31,6 +31,11 @@ import (
 	"github.com/opentracing/opentracing-go/log"
 )
 
+const (
+	TagHttpStatusCode = "http.status_code"
+	TagGoogleTraceID  = "appengine.googleapis.com/trace_id"
+)
+
 var (
 	spanPool = sync.Pool{
 		New: func() interface{} {
@@ -48,7 +53,7 @@ type Span struct {
 	errorSent     *int32
 	gSpan         *trace.Span
 	header        string
-	resp          *http.Response
+	statusCode    int
 	operationName string
 	startedAt     time.Time
 }
@@ -65,7 +70,7 @@ func (s *Span) release() {
 	s.errorSent = nil
 	s.gSpan = nil
 	s.header = ""
-	s.resp = nil
+	s.statusCode = 0
 	s.operationName = ""
 
 	spanPool.Put(s)
@@ -93,8 +98,8 @@ func (s *Span) Finish() {
 // timestamps and log data.
 func (s *Span) FinishWithOptions(opts opentracing.FinishOptions) {
 	if s.gSpan != nil {
-		if s.resp != nil {
-			s.gSpan.Finish(trace.WithResponse(s.resp))
+		if s.statusCode > 0 {
+			s.gSpan.Finish(trace.WithResponse(&http.Response{StatusCode: s.statusCode}))
 
 		} else {
 			s.gSpan.Finish()
@@ -141,14 +146,22 @@ func (s *Span) SetTag(key string, value interface{}) opentracing.Span {
 
 	var str string
 	switch v := value.(type) {
+	case *http.Request:
+		return s
 	case *http.Response:
-		s.resp = v
+		if v != nil {
+			s.statusCode = v.StatusCode
+		}
 	case string:
 		str = v
 	case bool:
 		str = strconv.FormatBool(v)
 	case int:
 		str = strconv.FormatInt(int64(v), 10)
+		if key == TagHttpStatusCode {
+			s.statusCode = v
+		}
+
 	case int8:
 		str = strconv.FormatInt(int64(v), 10)
 	case int16:
@@ -171,6 +184,10 @@ func (s *Span) SetTag(key string, value interface{}) opentracing.Span {
 		str = strconv.FormatFloat(v, 'f', 2, 64)
 	case float32:
 		str = strconv.FormatFloat(float64(v), 'f', 2, 32)
+	case error:
+		str = v.Error()
+	case fmt.Stringer:
+		str = v.String()
 	default:
 		str = fmt.Sprintf("%v", value)
 	}
@@ -183,21 +200,22 @@ func (s *Span) SetTag(key string, value interface{}) opentracing.Span {
 	return s
 }
 
-func (s *Span) log(content map[string]interface{}) {
-	if s.tracer.logger == nil {
+// reportError sends an error to the Stackdriver error reporting service
+func (s *Span) reportError(err error) {
+	if err == nil || s.tracer.errorClient == nil {
 		return
 	}
 
-	for _, value := range content {
-		if s.tracer.errorClient != nil && value != nil {
-			if err, ok := value.(error); ok {
-				if v := atomic.AddInt32(s.errorSent, 1); v == 1 {
-					s.tracer.errorClient.Report(errorreporting.Entry{
-						Error: err,
-					})
-				}
-			}
-		}
+	if v := atomic.AddInt32(s.errorSent, 1); v == 1 {
+		s.tracer.errorClient.Report(errorreporting.Entry{
+			Error: err,
+		})
+	}
+}
+
+func (s *Span) log(content map[string]interface{}) {
+	if s.tracer.logger == nil {
+		return
 	}
 
 	var labels map[string]string
@@ -215,7 +233,7 @@ func (s *Span) log(content map[string]interface{}) {
 		if labels == nil {
 			labels = map[string]string{}
 		}
-		labels["appengine.googleapis.com/trace_id"] = s.gSpan.TraceID()
+		labels[TagGoogleTraceID] = s.gSpan.TraceID()
 	}
 
 	s.tracer.logger.Log(logging.Entry{
@@ -237,7 +255,24 @@ func (s *Span) log(content map[string]interface{}) {
 func (s *Span) LogFields(fields ...log.Field) {
 	content := map[string]interface{}{}
 	for _, f := range fields {
-		content[f.Key()] = f.Value()
+		value := f.Value()
+		if value == nil {
+			continue
+		}
+
+		switch v := value.(type) {
+		case error:
+			if s.tracer.errorClient != nil {
+				s.reportError(v)
+			}
+			content[f.Key()] = v.Error()
+
+		case fmt.Stringer:
+			content[f.Key()] = v.String()
+
+		default:
+			content[f.Key()] = v
+		}
 	}
 
 	s.log(content)
