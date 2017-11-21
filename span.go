@@ -21,11 +21,8 @@ import (
 	"os"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"cloud.google.com/go/errorreporting"
-	"cloud.google.com/go/logging"
 	"cloud.google.com/go/trace"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/log"
@@ -56,6 +53,10 @@ type Span struct {
 	statusCode    int
 	operationName string
 	startedAt     time.Time
+}
+
+func (s *Span) reportError(err error) {
+	s.tracer.reportError(err, s.errorSent)
 }
 
 func (s *Span) release() {
@@ -92,6 +93,15 @@ func (s *Span) ForeachBaggageItem(handler func(k, v string) bool) {
 // otherwise leads to undefined behavior.
 func (s *Span) Finish() {
 	s.FinishWithOptions(opentracing.FinishOptions{})
+}
+
+func (s *Span) log(content map[string]interface{}) {
+	traceID := ""
+	if s.gSpan != nil {
+		traceID = s.gSpan.TraceID()
+	}
+
+	s.tracer.log(content, traceID, s.baggage, s.tags)
 }
 
 // FinishWithOptions is like Finish() but with explicit control over
@@ -198,48 +208,6 @@ func (s *Span) SetTag(key string, value interface{}) opentracing.Span {
 	}
 
 	return s
-}
-
-// reportError sends an error to the Stackdriver error reporting service
-func (s *Span) reportError(err error) {
-	if err == nil || s.tracer.errorClient == nil {
-		return
-	}
-
-	if v := atomic.AddInt32(s.errorSent, 1); v == 1 {
-		s.tracer.errorClient.Report(errorreporting.Entry{
-			Error: err,
-		})
-	}
-}
-
-func (s *Span) log(content map[string]interface{}) {
-	if s.tracer.logger == nil {
-		return
-	}
-
-	var labels map[string]string
-	if len(s.baggage)+len(s.tags) > 0 {
-		labels = map[string]string{}
-		for k, v := range s.tags {
-			labels[k] = v
-		}
-		for k, v := range s.baggage {
-			labels[k] = v
-		}
-	}
-
-	if s.gSpan != nil {
-		if labels == nil {
-			labels = map[string]string{}
-		}
-		labels[TagGoogleTraceID] = s.gSpan.TraceID()
-	}
-
-	s.tracer.logger.Log(logging.Entry{
-		Payload: content,
-		Labels:  labels,
-	})
 }
 
 // LogFields is an efficient and type-checked way to record key:value

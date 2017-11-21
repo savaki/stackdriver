@@ -22,12 +22,14 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"cloud.google.com/go/errorreporting"
 	"cloud.google.com/go/logging"
 	"cloud.google.com/go/trace"
 	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/log"
 	"google.golang.org/api/option"
 )
 
@@ -245,6 +247,74 @@ func (t *Tracer) Inject(sm opentracing.SpanContext, format interface{}, carrier 
 	}
 
 	return nil
+}
+
+// reportError sends an error to the Stackdriver error reporting service
+func (t *Tracer) reportError(err error, errorSent *int32) {
+	if err == nil || t.errorClient == nil {
+		return
+	}
+
+	if v := atomic.AddInt32(errorSent, 1); v == 1 {
+		t.errorClient.Report(errorreporting.Entry{
+			Error: err,
+		})
+	}
+}
+
+func (t *Tracer) log(content map[string]interface{}, traceID string, baggage, tags map[string]string) {
+	if t.logger == nil {
+		return
+	}
+
+	var labels map[string]string
+	if len(baggage)+len(tags) > 0 {
+		labels = map[string]string{}
+		for k, v := range tags {
+			labels[k] = v
+		}
+		for k, v := range baggage {
+			labels[k] = v
+		}
+	}
+
+	if traceID != "" {
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels[TagGoogleTraceID] = traceID
+	}
+
+	t.logger.Log(logging.Entry{
+		Payload: content,
+		Labels:  labels,
+	})
+}
+
+// LogFields allows logging outside the scope of a span
+func (t *Tracer) LogFields(fields ...log.Field) {
+	content := map[string]interface{}{}
+	for _, f := range fields {
+		value := f.Value()
+		if value == nil {
+			continue
+		}
+
+		switch v := value.(type) {
+		case error:
+			var errorSent int32
+			t.reportError(v, &errorSent)
+			content[f.Key()] = v.Error()
+
+		case fmt.Stringer:
+			content[f.Key()] = v.String()
+
+		default:
+			content[f.Key()] = v
+		}
+	}
+
+	t.log(content, "", t.baggage, nil)
 }
 
 func extractBinary(carrier interface{}) (string, map[string]string, error) {
