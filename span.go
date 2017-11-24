@@ -154,14 +154,20 @@ func (s *Span) SetTag(key string, value interface{}) opentracing.Span {
 		s.tags = map[string]string{}
 	}
 
+	if value == nil {
+		return s
+	}
+
 	var str string
 	switch v := value.(type) {
 	case *http.Request:
-		return s
+		return s // don't save the request
+
 	case *http.Response:
-		if v != nil {
-			s.statusCode = v.StatusCode
-		}
+		s.statusCode = v.StatusCode
+		key = "http.status_code"
+		str = strconv.Itoa(v.StatusCode)
+
 	case string:
 		str = v
 	case bool:
@@ -171,7 +177,6 @@ func (s *Span) SetTag(key string, value interface{}) opentracing.Span {
 		if key == TagHttpStatusCode {
 			s.statusCode = v
 		}
-
 	case int8:
 		str = strconv.FormatInt(int64(v), 10)
 	case int16:
