@@ -164,6 +164,9 @@ func (s *Span) SetTag(key string, value interface{}) opentracing.Span {
 		return s // don't save the request
 
 	case *http.Response:
+		if v.StatusCode == 0 {
+			return s
+		}
 		s.statusCode = v.StatusCode
 		key = "http.status_code"
 		str = strconv.Itoa(v.StatusCode)
